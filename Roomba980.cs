@@ -41,14 +41,15 @@ namespace Nulah.Roomba {
         /// <param name="RobotLocalIP"></param>
         /// <returns></returns>
         public RoombaDetails GetDetails(IPAddress RobotLocalIP) {
-
-
             var roombaDetails = GetRobotPublicInfo(RobotLocalIP);
             var roombaPassword = GetRoombaPassword(RobotLocalIP);
             return new RoombaDetails() {
                 LocalIp = RobotLocalIP,
-                Password = roombaPassword,
-                Username = roombaDetails.hostname.Split('-').Last(),
+                Credentials = new RoombaCredentials
+                {
+                    Password = roombaPassword,
+                    Username = roombaDetails.hostname.Split('-').Last(),
+                },
                 Details = roombaDetails
             };
         }
@@ -69,15 +70,16 @@ namespace Nulah.Roomba {
         /// </summary>
         /// <param name="RobotLocalIP"></param>
         public Details GetRobotPublicInfo(IPAddress RobotLocalIP) {
-            var udpClient = new UdpClient();
+            using (var udpClient = new UdpClient())
+            {
+                var msg = Encoding.ASCII.GetBytes("irobotmcs");
 
-            var msg = Encoding.ASCII.GetBytes("irobotmcs");
+                udpClient.Send(msg, msg.Length, new IPEndPoint(RobotLocalIP, 5678));
 
-            udpClient.Send(msg, msg.Length, new IPEndPoint(RobotLocalIP, 5678));
-
-            var res = udpClient.ReceiveAsync().Result;
-            var roombaDetails = ParseBytesToType<Details>(res.Buffer);
-            return roombaDetails;
+                var res = udpClient.ReceiveAsync().Result;
+                var roombaDetails = ParseBytesToType<Details>(res.Buffer);
+                return roombaDetails;
+            }
         }
 
         /// <summary>
@@ -209,11 +211,11 @@ namespace Nulah.Roomba {
         /// <returns></returns>
         public string GetRoombaPassword(IPAddress RobotLocalIP) {
 
-            using (var client = new TcpClient(RobotLocalIP.ToString(), port: 8883))
+            using (var tcpClient = new TcpClient(RobotLocalIP.ToString(), port: 8883))
             {
                 _logger.Info("Connected to Roomba");
                 // Create an SSL stream that will close the client's stream.
-                using( var sslStream = new SslStream(client.GetStream(),false,new RemoteCertificateValidationCallback(ValidateServerCertificate),null))
+                using( var sslStream = new SslStream(tcpClient.GetStream(),false,new RemoteCertificateValidationCallback(ValidateServerCertificate),null))
                 {
                     try 
                     {
@@ -224,7 +226,7 @@ namespace Nulah.Roomba {
                             _logger.Error($"Inner exception: {e.InnerException.Message}", e.InnerException);
                         }
                         _logger.Info("Authentication failed - closing the connection.");
-                        client.Close();
+                        tcpClient.Close();
                     }
 
                     // Send message to Roomba to get password
@@ -296,9 +298,9 @@ namespace Nulah.Roomba {
 
         private IMqttClient client;
 
-        public async Task ConnectToRoombaViaMQTT(RoombaDetails roombaDetails) {
+        public async Task ConnectToRoombaViaMQTT(IPAddress ip, RoombaCredentials credentials) {
             var opts = new MqttClientOptions {
-                ClientId = roombaDetails.Username,
+                ClientId = credentials.Username,
                 ChannelOptions = new MqttClientTcpOptions {
                     Port = 8883,
                     TlsOptions = new MqttClientTlsOptions {
@@ -307,11 +309,11 @@ namespace Nulah.Roomba {
                         IgnoreCertificateRevocationErrors = true,
                         UseTls = true
                     },
-                    Server = roombaDetails.LocalIp.ToString()
+                    Server = ip.ToString()
                 },
                 Credentials = new MqttClientCredentials {
-                    Username = roombaDetails.Username,
-                    Password = roombaDetails.Password
+                    Username = credentials.Username,
+                    Password = credentials.Password
                 },
                 CleanSession = false,
                 ProtocolVersion = MQTTnet.Serializer.MqttProtocolVersion.V311,
