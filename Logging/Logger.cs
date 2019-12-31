@@ -8,18 +8,25 @@ namespace Nulah.Roomba
         void Debug(string logMessage);
         void Info(string logMessage);
         void Error(string logMessage, Exception e);
+        bool IsDebugEnabled { get; }
     }
 
     public class ConsoleLogger : ILogger
     {
+        public ConsoleLogger(bool isDebugEnabled)
+        {
+            IsDebugEnabled = isDebugEnabled;
+        }
         public void Debug(string logMessage, string logGroup)
         {
-            Log($"DEBUG [{logGroup}] {logMessage}");
+            if( IsDebugEnabled )
+                Log($"DEBUG [{logGroup}] {logMessage}");
         }
 
         public void Debug(string logMessage)
         {
-            Log( $"DEBUG {logMessage}");
+            if( IsDebugEnabled )
+                Log( $"DEBUG {logMessage}");
         }
 
         public void Info(string logMessage)
@@ -31,6 +38,8 @@ namespace Nulah.Roomba
         {
             Log( $"ERROR {logMessage}: {e?.StackTrace}");
         }
+
+        public bool IsDebugEnabled { get; }
 
         private void Log(string logMessage)
         {

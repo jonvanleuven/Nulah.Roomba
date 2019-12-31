@@ -6,7 +6,6 @@ using Nulah.Roomba.Models;
 using Nulah.Roomba.Models.Responses;
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Security;
@@ -24,9 +23,8 @@ namespace Nulah.Roomba {
         private readonly string _poseRegex = @"({""theta"":[\d-]+,""point"":{[xy:\"",\d-]+}})";
         private readonly ILogger _logger;
 
-        public Roomba980() : this(new ConsoleLogger())
+        public Roomba980() : this(new ConsoleLogger(true))
         {
-            _logger = new ConsoleLogger();
         }
 
         public Roomba980(ILogger logger) 
@@ -96,7 +94,7 @@ namespace Nulah.Roomba {
 
         private async Task<MqttMessagePayload> ParseMQTTMessageToPayload(byte[] byteArray, string topic) {
             var resString = Encoding.Default.GetString(byteArray);
-            Task<MqttMessagePayload> res = Task.Run(() => {
+            var res = Task.Run(() => {
 
                 dynamic s = JsonConvert.DeserializeObject(resString);
 
@@ -112,57 +110,35 @@ namespace Nulah.Roomba {
 
                 var messageGroup = "[Grouped] " + string.Join(",", nestedTopics.Select(x => x.Key));
 
-                DateTime timestamp = StaticHelpers.GetUtcNow();
+                var timestamp = StaticHelpers.GetUtcNow();
                 _logger.Debug(resString, messageGroup);
 
-                var parsedTopicsForLog = nestedTopics.Select(x => {
+                if(_logger.IsDebugEnabled)
+                    nestedTopics.Select(x => {
 
-                    if(x.Key == "langs") {
-                        JsonSerializerSettings settings = new JsonSerializerSettings {
-                            TypeNameHandling = TypeNameHandling.Objects
-                        };
-                        settings.Converters.Add(new LangsConverter());
+                        if(x.Key == "langs") {
+                            var settings = new JsonSerializerSettings {
+                                TypeNameHandling = TypeNameHandling.Objects
+                            };
+                            settings.Converters.Add(new LangsConverter());
 
+                            return new {
+                                Topic = x.Key,
+                                Path = ( x.ObjectNested ) ? x.Value.First.ToString(Formatting.None) : x.Value.ToString(Formatting.None),
+                                obj = JsonConvert.DeserializeObject($"{{{x.Value.ToString()}}}", typeof(Langs), settings)
+                            };
+                        }
                         return new {
                             Topic = x.Key,
                             Path = ( x.ObjectNested ) ? x.Value.First.ToString(Formatting.None) : x.Value.ToString(Formatting.None),
-                            obj = JsonConvert.DeserializeObject($"{{{x.Value.ToString()}}}", typeof(Langs), settings)
+                            obj = ( x.ObjectNested )
+                            ? JsonConvert.DeserializeObject(x.Value.First.ToString(Formatting.None), x.Type)
+                            : JsonConvert.DeserializeObject(x.Value.Parent.ToString(Formatting.None), x.Type)
                         };
-                    }
-                    return new {
-                        Topic = x.Key,
-                        Path = ( x.ObjectNested ) ? x.Value.First.ToString(Formatting.None) : x.Value.ToString(Formatting.None),
-                        obj = ( x.ObjectNested )
-                        ? JsonConvert.DeserializeObject(x.Value.First.ToString(Formatting.None), x.Type)
-                        : JsonConvert.DeserializeObject(x.Value.Parent.ToString(Formatting.None), x.Type)
-                    };
-                });
-                /*
-                List<string> messagesToLog = new List<string>();
-
-                messagesToLog.Add(logMessage);
-                */
-                foreach(var ptfl in parsedTopicsForLog) {
-                    _logger.Debug(ptfl.Path, ptfl.Topic);
-                    /*
-                    logMessage = $"->\t{ptfl.Topic}\t{ptfl.Path}{Environment.NewLine}";
-                    messagesToLog.Add(logMessage);
-                    */
-                }
-
-                /*
-                byte[] logBytes = Encoding.UTF8.GetBytes(string.Join("", messagesToLog));
-
-                Task.Run(async () => {
-                    using(var ss = File.Open(Path.Combine(LogFileLocation, logFileName), FileMode.OpenOrCreate)) {
-                        ss.Seek(0, SeekOrigin.End);
-                        await ss.WriteAsync(logBytes, 0, logBytes.Length);
-                    }
-                });
-                */
+                    }).ToList().ForEach(ptfl =>  _logger.Debug(ptfl.Path, ptfl.Topic));
 
                 // Add to MqttMessage and figure out a way to bundle all the messages with it
-                DateTime eventTime = DateTime.UtcNow;
+                var eventTime = DateTime.UtcNow;
 
                 var nestedPath = nestedObject.First.Path;
                 IEnumerable<MqttMessage> ms;
@@ -180,7 +156,7 @@ namespace Nulah.Roomba {
                     ms = nestedTopics.Select(x => {
 
                         if(x.Key == "langs") {
-                            JsonSerializerSettings settings = new JsonSerializerSettings {
+                            var settings = new JsonSerializerSettings {
                                 TypeNameHandling = TypeNameHandling.Objects
                             };
                             settings.Converters.Add(new LangsConverter());
@@ -206,54 +182,13 @@ namespace Nulah.Roomba {
                     });
                 }
 
-                MqttMessagePayload mqttres = new MqttMessagePayload {
+                var mqttres = new MqttMessagePayload {
                     Messages = ms.ToArray()
                 };
                 return mqttres;
             });
             return await res;
         }
-
-        private MqttMessage ToMqttMessage<T>(string Topic, JObject payload) {
-            return new MqttMessage {
-                Topic = Topic,
-                Type = typeof(T),
-                Raw = payload.ToString(Formatting.None),
-                Payload = payload.ToObject<T>()
-            };
-        }
-
-        private MqttMessage ToMqttMessage<T>(string Topic, JToken payload) {
-            return new MqttMessage {
-                Topic = Topic,
-                Type = typeof(T),
-                Raw = payload.ToString(Formatting.None),
-                Payload = payload.ToObject<T>()
-            };
-        }
-
-        /// <summary>
-        /// Uses a custom deserialization class to take over for edge cases where the default will fail.
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="Topic"></param>
-        /// <param name="payload"></param>
-        /// <param name="customDeserialiser"></param>
-        /// <returns></returns>
-        private MqttMessage ToMqttMessage<T>(string Topic, JObject payload, JsonConverter customDeserialiser) {
-            JsonSerializerSettings settings = new JsonSerializerSettings {
-                TypeNameHandling = TypeNameHandling.Objects,
-
-            };
-            settings.Converters.Add(customDeserialiser);
-            return new MqttMessage {
-                Topic = Topic,
-                Type = typeof(T),
-                Raw = payload.ToString(Formatting.None),
-                Payload = JsonConvert.DeserializeObject<T>(payload.ToString(), settings)
-            };
-        }
-
 
         // Ignore all cert errors
         public static bool ValidateServerCertificate(
@@ -318,9 +253,9 @@ namespace Nulah.Roomba {
 
         private string ReadMessage(SslStream sslStream) {
 
-            byte[] buffer = new byte[35];
+            var buffer = new byte[35];
             string resString = null;
-            int bytes = -1;
+            var bytes = -1;
 
             while(( bytes = sslStream.Read(buffer, 0, buffer.Length) ) > 0) {
                 // First message from the vacuum the length of the password
@@ -387,7 +322,7 @@ namespace Nulah.Roomba {
 
             client = factory.CreateMqttClient();
 
-            client.Connected += async (s, e) => {
+            client.Connected += (s, e) => {
                 OnMessage(this, new RoombaReceivedMessageEvent {
                     Message = new MqttMessagePayload {
                         Messages = new[]{
@@ -401,13 +336,11 @@ namespace Nulah.Roomba {
                     }
                 });
                 _logger.Info("Connected to Roomba");
-                //await client.SubscribeAsync(new TopicFilterBuilder().WithTopic("#").Build());
             };
 
             client.Disconnected += async (s, e) => {
                 _logger.Info("Disconnected. Reconnecting");
                 await client.ConnectAsync(opts);
-                //throw new Exception("discconected");
             };
 
             client.ApplicationMessageReceived += async (s, e) => {
@@ -416,10 +349,8 @@ namespace Nulah.Roomba {
                     OnMessage(this, new RoombaReceivedMessageEvent {
                         Message = resMessage
                     });
-                    //_logger.Info($"Received message with topic {e.ApplicationMessage.Topic}: {resMessage.Raw}");
                 } else {
                     _logger.Info($"Received message with topic {e.ApplicationMessage.Topic}: {{topic was not handled}}");
-                    //_logger.Info($"Received message with topic {e.ApplicationMessage.Topic}: {{topic was not handled}}");
                 }
             };
 
@@ -431,39 +362,8 @@ namespace Nulah.Roomba {
         }
 
         public async Task SendCommand(string commandString) {
-            /*
-            var cmd = new {
-                command = new {
-                    state = commandString
-                },
-                time = DateTime.Now.ToFileTimeUtc(),
-                initiator = "localApp"
-            };
-            var cmdString = JsonConvert.SerializeObject(cmd);
-            */
-            /*
-
-        start: () => _apiCall('cmd', 'start'),
-        function _apiCall (topic, command) {
-        return new Promise((resolve, reject) => {
-        let cmd = {command: command, time: Date.now() / 1000 | 0, initiator: 'localApp'};
-        if (topic === 'delta') {
-        cmd = {'state': command};
-        }
-        client.publish(topic, JSON.stringify(cmd), function (e) {
-        if (e) return reject(e);
-        resolve({ok: null}); // for retro compatibility
-        });
-        });
-        }
-
-            {
-                "command" : "start",
-                time :
-            }
-             */
-            DateTime foo = DateTime.UtcNow;
-            long unixTime = ( (DateTimeOffset)foo ).ToUnixTimeSeconds();
+            var foo = DateTime.UtcNow;
+            var unixTime = ( (DateTimeOffset)foo ).ToUnixTimeSeconds();
             var applicationMessage = new MqttApplicationMessageBuilder()
                        .WithTopic("cmd")
                        .WithPayload($@"{{""command"":""{commandString}"",""time"":{unixTime},""initiator"":""localApp""}}")

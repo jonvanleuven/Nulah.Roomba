@@ -207,7 +207,7 @@ namespace Nulah.Roomba.Models.Responses {
         }
 
         public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer) {
-            JObject obj = JObject.Load(reader);
+            var obj = JObject.Load(reader);
             var langs = obj.First.First.Children()
                 .Select(x => new {
                     key = ( (JProperty)x.First ).Name,
