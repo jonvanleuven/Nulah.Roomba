@@ -274,51 +274,46 @@ namespace Nulah.Roomba {
         /// <returns></returns>
         public string GetRoombaPassword(IPAddress RobotLocalIP) {
 
-            TcpClient client = new TcpClient(RobotLocalIP.ToString(), port: 8883);
-            _logger.Info("Connected to Roomba");
+            using (var client = new TcpClient(RobotLocalIP.ToString(), port: 8883))
+            {
+                _logger.Info("Connected to Roomba");
+                // Create an SSL stream that will close the client's stream.
+                using( var sslStream = new SslStream(client.GetStream(),false,new RemoteCertificateValidationCallback(ValidateServerCertificate),null))
+                {
+                    try 
+                    {
+                        sslStream.AuthenticateAsClient("localhost");
+                    } catch(AuthenticationException e) {
+                        _logger.Error($"Exception: {e.Message}", e);
+                        if(e.InnerException != null) {
+                            _logger.Error($"Inner exception: {e.InnerException.Message}", e.InnerException);
+                        }
+                        _logger.Info("Authentication failed - closing the connection.");
+                        client.Close();
+                    }
 
-            // Create an SSL stream that will close the client's stream.
-            SslStream sslStream = new SslStream(
-                client.GetStream(),
-                false,
-                new RemoteCertificateValidationCallback(ValidateServerCertificate),
-                null
-                );
-
-            try {
-                sslStream.AuthenticateAsClient("localhost");
-            } catch(AuthenticationException e) {
-                _logger.Error($"Exception: {e.Message}", e);
-                if(e.InnerException != null) {
-                    _logger.Error($"Inner exception: {e.InnerException.Message}", e.InnerException);
+                    // Send message to Roomba to get password
+                    // TODO: figure out where this message was discovered, assuming it wasn't from
+                    // sniffing the traffic
+                    // Dug from https://github.com/pschmitt/roombapy/blob/master/roomba/password.py
+                    /*
+                        # this is 0xf0 (mqtt reserved) 0x05(data length)
+                        # 0xefcc3b2900 (data)
+                        [0]	240	byte // mqtt           0xf0
+                        [1]	5	byte // message length 0x05
+                        [2]	239	byte // message        0xef
+                        [3]	204	byte // message        0xcc
+                        [4]	59	byte // message        0x3b
+                        [5]	41	byte // message        0x29
+                        [6]	0	byte // message        0x00 - Based on errors returned, this seems like its a response flag, where 0x00 is OK, and 0x03 is ERROR? not sure
+                                                              but details might be found in documentation for mqtt
+                     */
+                    byte[] messsage = { 0xf0, 0x05, 0xef, 0xcc, 0x3b, 0x29, 0x00 };
+                    sslStream.Write(messsage);
+                    sslStream.Flush();
+                    return ReadMessage(sslStream);
                 }
-                _logger.Info("Authentication failed - closing the connection.");
-                client.Close();
             }
-
-            // Send message to Roomba to get password
-            // TODO: figure out where this message was discovered, assuming it wasn't from
-            // sniffing the traffic
-            // Dug from https://github.com/pschmitt/roombapy/blob/master/roomba/password.py
-            /*
-                # this is 0xf0 (mqtt reserved) 0x05(data length)
-                # 0xefcc3b2900 (data)
-                [0]	240	byte // mqtt           0xf0
-                [1]	5	byte // message length 0x05
-                [2]	239	byte // message        0xef
-                [3]	204	byte // message        0xcc
-                [4]	59	byte // message        0x3b
-                [5]	41	byte // message        0x29
-                [6]	0	byte // message        0x00 - Based on errors returned, this seems like its a response flag, where 0x00 is OK, and 0x03 is ERROR? not sure
-                                                      but details might be found in documentation for mqtt
-             */
-            byte[] messsage = { 0xf0, 0x05, 0xef, 0xcc, 0x3b, 0x29, 0x00 };
-            sslStream.Write(messsage);
-            sslStream.Flush();
-
-            string roombaPassword = ReadMessage(sslStream);
-
-            return roombaPassword;
         }
 
         private string ReadMessage(SslStream sslStream) {
@@ -361,7 +356,6 @@ namespace Nulah.Roomba {
                     throw new Exception("Failed to retrieve password. Did you hold the home button until it beeped?");
                 }
             }
-
             return resString;
         }
 
