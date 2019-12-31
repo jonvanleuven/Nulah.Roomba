@@ -22,11 +22,16 @@ namespace Nulah.Roomba {
     public class Roomba980 {
 
         private readonly string _poseRegex = @"({""theta"":[\d-]+,""point"":{[xy:\"",\d-]+}})";
-        private readonly Logger _logger;
+        private readonly ILogger _logger;
 
-        public Roomba980() {
-            _logger = new Logger();
-            logFileName = $"Nulah.RoombaLogFile-{DateTime.UtcNow.ToString("s").Replace(":", "_") }.log";
+        public Roomba980() : this(new ConsoleLogger())
+        {
+            _logger = new ConsoleLogger();
+        }
+
+        public Roomba980(ILogger logger) 
+        {
+            _logger = logger;
         }
 
         /// <summary>
@@ -49,9 +54,6 @@ namespace Nulah.Roomba {
                 Details = roombaDetails
             };
         }
-
-        private string logFileName;
-        public string LogFileLocation = "./";
 
         public class RoombaReceivedMessageEvent : EventArgs {
             public MqttMessagePayload Message { get; set; }
@@ -92,9 +94,6 @@ namespace Nulah.Roomba {
             return deserialized;
         }
 
-        public List<string> types = new List<string>();
-        public List<string> Messages = new List<string>();
-
         private async Task<MqttMessagePayload> ParseMQTTMessageToPayload(byte[] byteArray, string topic) {
             var resString = Encoding.Default.GetString(byteArray);
             Task<MqttMessagePayload> res = Task.Run(() => {
@@ -114,7 +113,7 @@ namespace Nulah.Roomba {
                 var messageGroup = "[Grouped] " + string.Join(",", nestedTopics.Select(x => x.Key));
 
                 DateTime timestamp = StaticHelpers.GetUtcNow();
-                _logger.Append(resString, messageGroup);
+                _logger.Debug(resString, messageGroup);
 
                 var parsedTopicsForLog = nestedTopics.Select(x => {
 
@@ -144,7 +143,7 @@ namespace Nulah.Roomba {
                 messagesToLog.Add(logMessage);
                 */
                 foreach(var ptfl in parsedTopicsForLog) {
-                    _logger.Append(ptfl.Path, ptfl.Topic);
+                    _logger.Debug(ptfl.Path, ptfl.Topic);
                     /*
                     logMessage = $"->\t{ptfl.Topic}\t{ptfl.Path}{Environment.NewLine}";
                     messagesToLog.Add(logMessage);
@@ -276,7 +275,7 @@ namespace Nulah.Roomba {
         public string GetRoombaPassword(IPAddress RobotLocalIP) {
 
             TcpClient client = new TcpClient(RobotLocalIP.ToString(), port: 8883);
-            Console.WriteLine("Connected to Roomba");
+            _logger.Info("Connected to Roomba");
 
             // Create an SSL stream that will close the client's stream.
             SslStream sslStream = new SslStream(
@@ -289,11 +288,11 @@ namespace Nulah.Roomba {
             try {
                 sslStream.AuthenticateAsClient("localhost");
             } catch(AuthenticationException e) {
-                Console.WriteLine("Exception: {0}", e.Message);
+                _logger.Error($"Exception: {e.Message}", e);
                 if(e.InnerException != null) {
-                    Console.WriteLine("Inner exception: {0}", e.InnerException.Message);
+                    _logger.Error($"Inner exception: {e.InnerException.Message}", e.InnerException);
                 }
-                Console.WriteLine("Authentication failed - closing the connection.");
+                _logger.Info("Authentication failed - closing the connection.");
                 client.Close();
             }
 
@@ -407,12 +406,12 @@ namespace Nulah.Roomba {
                         }
                     }
                 });
-                Console.WriteLine("Connected to Roomba");
+                _logger.Info("Connected to Roomba");
                 //await client.SubscribeAsync(new TopicFilterBuilder().WithTopic("#").Build());
             };
 
             client.Disconnected += async (s, e) => {
-                Console.WriteLine("Disconnected. Reconnecting");
+                _logger.Info("Disconnected. Reconnecting");
                 await client.ConnectAsync(opts);
                 //throw new Exception("discconected");
             };
@@ -423,17 +422,17 @@ namespace Nulah.Roomba {
                     OnMessage(this, new RoombaReceivedMessageEvent {
                         Message = resMessage
                     });
-                    //Console.WriteLine($"Received message with topic {e.ApplicationMessage.Topic}: {resMessage.Raw}");
+                    //_logger.Info($"Received message with topic {e.ApplicationMessage.Topic}: {resMessage.Raw}");
                 } else {
-                    Console.WriteLine($"Received message with topic {e.ApplicationMessage.Topic}: {{topic was not handled}}");
-                    //throw new Exception($"Received message with topic {e.ApplicationMessage.Topic}: {{topic was not handled}}");
+                    _logger.Info($"Received message with topic {e.ApplicationMessage.Topic}: {{topic was not handled}}");
+                    //_logger.Info($"Received message with topic {e.ApplicationMessage.Topic}: {{topic was not handled}}");
                 }
             };
 
             try {
                 await client.ConnectAsync(opts);
             } catch(Exception e) {
-                Console.WriteLine("### CONNECTING FAILED ###" + Environment.NewLine + e);
+                _logger.Error("### CONNECTING FAILED ###" + Environment.NewLine + e, e);
             }
         }
 
