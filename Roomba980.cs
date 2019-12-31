@@ -140,8 +140,6 @@ namespace Nulah.Roomba {
                     }).ToList().ForEach(ptfl =>  _logger.Debug(ptfl.Path, ptfl.Topic));
 
                 // Add to MqttMessage and figure out a way to bundle all the messages with it
-                var eventTime = DateTime.UtcNow;
-
                 var nestedPath = nestedObject.First.Path;
                 IEnumerable<MqttMessage> ms;
                 if(nestedPath == "state.reported.pose") {
@@ -324,7 +322,10 @@ namespace Nulah.Roomba {
 
             client = factory.CreateMqttClient();
 
-            client.Connected += (s, e) => {
+            client.Connected += (s, e) =>
+            {
+                if (OnMessage == null)
+                    return;
                 OnMessage(this, new RoombaReceivedMessageEvent {
                     Message = new MqttMessagePayload {
                         Messages = new[]{
@@ -347,6 +348,8 @@ namespace Nulah.Roomba {
 
             client.ApplicationMessageReceived += async (s, e) => {
                 var resMessage = await ParseMQTTMessageToPayload(e.ApplicationMessage.Payload, e.ApplicationMessage.Topic);
+                if (OnMessage == null)
+                    return;
                 if(resMessage != null) {
                     OnMessage(this, new RoombaReceivedMessageEvent {
                         Message = resMessage
@@ -356,11 +359,7 @@ namespace Nulah.Roomba {
                 }
             };
 
-            try {
-                await client.ConnectAsync(opts);
-            } catch(Exception e) {
-                _logger.Error("### CONNECTING FAILED ###" + Environment.NewLine + e, e);
-            }
+            await client.ConnectAsync(opts);
         }
 
         public async Task SendCommand(string commandString) {
@@ -370,11 +369,7 @@ namespace Nulah.Roomba {
                        .WithTopic("cmd")
                        .WithPayload($@"{{""command"":""{commandString}"",""time"":{unixTime},""initiator"":""localApp""}}")
                         .Build();
-            try {
-                await client.PublishAsync(applicationMessage);
-            } catch(Exception e) {
-                throw e;
-            }
+            await client.PublishAsync(applicationMessage);
         }
     }
 }
