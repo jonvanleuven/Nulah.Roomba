@@ -112,7 +112,7 @@ namespace Nulah.Roomba {
 
                 var messageGroup = "[Grouped] " + string.Join(",", nestedTopics.Select(x => x.Key));
 
-                var timestamp = StaticHelpers.GetUtcNow();
+                var timestamp = DateTime.UtcNow;
                 _logger.Debug(resString, messageGroup);
 
                 if(_logger.IsDebugEnabled)
